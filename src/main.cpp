@@ -3,7 +3,8 @@
 #include "fabutils.h"
 #include "sprites.h"
 #include "sounds.h"
-#include <PS3Controller.h>
+#include <Ps3Controller.h>
+#include "WiFiGeneric.h"
 
 using fabgl::iclamp;
 
