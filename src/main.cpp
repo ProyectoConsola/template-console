@@ -5,7 +5,6 @@
 #include "fabutils.h"
 #include "sprites.h"
 #include "sounds.h"
-#include "WiFiGeneric.h"
 
 using fabgl::iclamp;
 
