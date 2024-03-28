@@ -2,6 +2,7 @@
 #include <Ps3Controller.h>
 
 #include "fabgl.h"
+#include "fabglconf.h"
 #include "fabutils.h"
 #include "sprites.h"
 #include "sounds.h"
@@ -12,6 +13,7 @@ fabgl::VGAController DisplayController;
 fabgl::Canvas        canvas(&DisplayController);
 fabgl::PS2Controller PS2Controller;
 SoundGenerator       soundGenerator;
+
 
 // IntroScene
 struct IntroScene : public Scene {
@@ -621,15 +623,16 @@ int GameScene::level_   = 1;
 int GameScene::lives_   = 3;
 int GameScene::score_   = 0;
 
-void setup()
+void
+setup()
 {
     Serial.begin(115200);
     PS2Controller.begin(PS2Preset::KeyboardPort0, KbdMode::GenerateVirtualKeys);
 
     Ps3.begin("24:6f:28:af:1c:66");
     DisplayController.begin();
-    DisplayController.setResolution(VGA_320x200_75Hz);
-    Serial.println("Ready.");
+    DisplayController.setResolution("\"300x240@60Hz\" 12.375 304 312 360 400 240 245 246 262 -HSync -VSync DoubleScan");
+    Serial.println("¡Listo!");
 }
 
 void loop()
