@@ -1,646 +1,365 @@
-#include <Arduino.h>
-#include <Ps3Controller.h>
-
+/*
+  Created by Fabrizio Di Vittorio (fdivitto2013@gmail.com) - <http://www.fabgl.com>
+  Copyright (c) 2019-2022 Fabrizio Di Vittorio.
+  All rights reserved.
+ 
+ 
+* Please contact fdivitto2013@gmail.com if you need a commercial license.
+ 
+ 
+* This library and related software is available under GPL v3.
+ 
+  FabGL is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+ 
+  FabGL is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+ 
+  You should have received a copy of the GNU General Public License
+  along with FabGL.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
+/* 
+ * Resoluciones a probar
+ * No funciona en el monitor que tengo:
+ * "320x256@60Hz" 13.44 320 329 380 427 256 258 259 262 -HSync -VSync DoubleScan
+ * Genera una rara pantalla blanca:
+ * "320x256@60Hz" 13.44 320 328 376 400 255 261 262 280 -HSync -VSync DoubleScan
+ * La que funciona pero no es exactamente cuadrada:
+ * "304x240@60Hz" 12.6 304 311 359 400 240 245 246 262 -HSync -VSync DoubleScan
+ */
+ 
 #include "fabgl.h"
-#include "fabglconf.h"
-#include "fabutils.h"
-#include "sprites.h"
-#include "sounds.h"
-
-using fabgl::iclamp;
-
-fabgl::VGAController DisplayController;
-fabgl::Canvas        canvas(&DisplayController);
-fabgl::PS2Controller PS2Controller;
-SoundGenerator       soundGenerator;
-
-
-// IntroScene
-struct IntroScene : public Scene {
-    static const int TEXTROWS = 4;
-    static const int TEXT_X   = 130;
-    static const int TEXT_Y   = 122;
-
-    static int controller_; // 1 = keyboard, 2 = mouse
-
-    int textRow_  = 0;
-    int textCol_  = 0;
-    int starting_ = 0;
-
-    SamplesGenerator * music_ = nullptr;
-
-    IntroScene()
-    : Scene(0, 20, DisplayController.getViewPortWidth(), DisplayController.getViewPortHeight())
-    {
-    }
-
-    void init()
-    {
-        canvas.setBrushColor(Color::Black);
-        canvas.clear();
-        canvas.setGlyphOptions(GlyphOptions().FillBackground(true));
-        canvas.selectFont(&fabgl::FONT_8x8);
-        canvas.setPenColor(Color::BrightWhite);
-        canvas.setGlyphOptions(GlyphOptions().DoubleWidth(1));
-        canvas.drawText(50, 15, "SPACE INVADERS");
-        canvas.setGlyphOptions(GlyphOptions().DoubleWidth(0));
-
-        canvas.setPenColor(Color::Green);
-        canvas.drawText(10, 40, "ESP32 version by Fabrizio Di Vittorio");
-        canvas.drawText(105, 55, "www.fabgl.com");
-
-        canvas.setPenColor(Color::Yellow);
-        canvas.drawText(72, 97, "* SCORE ADVANCE TABLE *");
-        canvas.drawBitmap(TEXT_X - 20 - 2, TEXT_Y, &bmpEnemyD);
-        canvas.drawBitmap(TEXT_X - 20, TEXT_Y + 15, &bmpEnemyA[0]);
-        canvas.drawBitmap(TEXT_X - 20, TEXT_Y + 30, &bmpEnemyB[0]);
-        canvas.drawBitmap(TEXT_X - 20, TEXT_Y + 45, &bmpEnemyC[0]);
-
-        canvas.setBrushColor(Color::Black);
-
-        controller_ = 0;
-
-        music_ = soundGenerator.playSamples(themeSoundSamples, sizeof(themeSoundSamples), 100, -1);
-    }
-
-    void update(int updateCount)
-    {
-        static const char * scoreText[] = {"= ? MISTERY", "= 30 POINTS", "= 20 POINTS", "= 10 POINTS" };
-
-        auto keyboard = PS2Controller.keyboard();
-        auto mouse    = PS2Controller.mouse();
-
-        if (starting_) {
-
-            if (starting_ > 50) {
-                // stop music
-                soundGenerator.detach(music_);
-                // stop scene
-                stop();
-            }
-
-            ++starting_;
-            canvas.scroll(0, -5);
-
-        } else {
-            if (updateCount > 30 && updateCount % 5 == 0 && textRow_ < 4) {
-                int x = TEXT_X + textCol_ * canvas.getFontInfo()->width;
-                int y = TEXT_Y + textRow_ * 15 - 4;
-                canvas.setPenColor(Color::White);
-                canvas.drawChar(x, y, scoreText[textRow_][textCol_]);
-                ++textCol_;
-                if (scoreText[textRow_][textCol_] == 0) {
-                    textCol_ = 0;
-                    ++textRow_;
-                }
-            }
-
-            if (updateCount % 20 == 0) {
-                canvas.setPenColor(random(256), random(256), random(256));
-                if (keyboard && keyboard->isKeyboardAvailable() && mouse && mouse->isMouseAvailable())
-                    canvas.drawText(45, 75, "Press [SPACE] or CLICK to Play");
-                else if (keyboard && keyboard->isKeyboardAvailable())
-                    canvas.drawText(80, 75, "Press [SPACE] to Play");
-                else if (mouse && mouse->isMouseAvailable())
-                    canvas.drawText(105, 75, "Click to Play");
-            }
-
-            // handle keyboard or mouse (after two seconds)
-            if (updateCount > 50) {
-                if (keyboard && keyboard->isKeyboardAvailable() && keyboard->isVKDown(fabgl::VK_SPACE))
-                    controller_ = 1;  // select keyboard as controller
-                else if (mouse && mouse->isMouseAvailable() && mouse->deltaAvailable() && mouse->getNextDelta(nullptr, 0) && mouse->status().buttons.left)
-                    controller_ = 2;  // select mouse as controller
-                starting_ = (controller_ > 0);  // start only when a controller has been selected
-            }
-        }
-    }
-
-    void collisionDetected(Sprite * spriteA, Sprite * spriteB, Point collisionPoint)
-    {
-    }
-
+ 
+const char * PresetResolutions[] = {
+  VGA_256x384_60Hz,
+  VGA_320x200_60HzD,
+  VGA_320x200_70Hz,
+  VGA_320x200_75Hz,
+  QVGA_320x240_60Hz,
+  VGA_400x300_60Hz,
+  VGA_480x300_75Hz,
+  VGA_512x192_60Hz,
+  VGA_512x384_60Hz,
+  VGA_512x448_60Hz,
+  VGA_512x512_58Hz,
+  VGA_640x200_60HzD,
+  VGA_640x200_70Hz,
+  VGA_640x240_60Hz,
+  VGA_640x350_70Hz,
+  VGA_640x350_70HzAlt1,
+  VESA_640x350_85Hz,
+  VGA_640x382_60Hz,
+  VGA_640x384_60Hz,
+  VGA_640x400_70Hz,
+  VGA_640x400_60Hz,
+  VGA_640x480_60Hz,
+  VGA_640x480_60HzAlt1,
+  VGA_640x480_60HzD,
+  VGA_640x480_73Hz,
+  VESA_640x480_75Hz,
+  VGA_720x348_50HzD,
+  VGA_720x348_73Hz,
+  VGA_720x400_70Hz,
+  VESA_720x400_85Hz,
+  PAL_720x576_50Hz,
+  VESA_768x576_60Hz,
+  SVGA_800x300_60Hz,
+  SVGA_800x600_56Hz,
+  SVGA_800x600_60Hz,
+  SVGA_960x540_60Hz,
+  SVGA_1024x768_60Hz,
+  SVGA_1024x768_70Hz,
+  SVGA_1024x768_75Hz,
+  SVGA_1280x600_60Hz,
+  SVGA_1280x720_60Hz,
+  SVGA_1280x720_60HzAlt1,
+  SVGA_1280x768_50Hz,
 };
-
-
-int IntroScene::controller_ = 0;
-
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// GameScene
-
-
-struct GameScene : public Scene {
-
-    enum SpriteType { TYPE_PLAYERFIRE, TYPE_ENEMIESFIRE, TYPE_ENEMY, TYPE_PLAYER, TYPE_SHIELD, TYPE_ENEMYMOTHER };
-
-    struct SISprite : Sprite {
-        SpriteType type;
-        uint8_t    enemyPoints;
-    };
-
-    enum GameState { GAMESTATE_PLAYING, GAMESTATE_PLAYERKILLED, GAMESTATE_ENDGAME, GAMESTATE_GAMEOVER, GAMESTATE_LEVELCHANGING, GAMESTATE_LEVELCHANGED };
-
-    static const int PLAYERSCOUNT       = 1;
-    static const int SHIELDSCOUNT       = 4;
-    static const int ROWENEMIESCOUNT    = 11;
-    static const int PLAYERFIRECOUNT    = 1;
-    static const int ENEMIESFIRECOUNT   = 1;
-    static const int ENEMYMOTHERCOUNT   = 1;
-    static const int SPRITESCOUNT       = PLAYERSCOUNT + SHIELDSCOUNT + 5 * ROWENEMIESCOUNT + PLAYERFIRECOUNT + ENEMIESFIRECOUNT + ENEMYMOTHERCOUNT;
-
-    static const int ENEMIES_X_SPACE    = 16;
-    static const int ENEMIES_Y_SPACE    = 10;
-    static const int ENEMIES_START_X    = 0;
-    static const int ENEMIES_START_Y    = 30;
-    static const int ENEMIES_STEP_X     = 6;
-    static const int ENEMIES_STEP_Y     = 8;
-
-    static const int PLAYER_Y           = 170;
-
-    static int lives_;
-    static int score_;
-    static int level_;
-    static int hiScore_;
-
-    SISprite * sprites_     = new SISprite[SPRITESCOUNT];
-    SISprite * player_      = sprites_;
-    SISprite * shields_     = player_ + PLAYERSCOUNT;
-    SISprite * enemies_     = shields_ + SHIELDSCOUNT;
-    SISprite * enemiesR1_   = enemies_;
-    SISprite * enemiesR2_   = enemiesR1_ + ROWENEMIESCOUNT;
-    SISprite * enemiesR3_   = enemiesR2_ + ROWENEMIESCOUNT;
-    SISprite * enemiesR4_   = enemiesR3_ + ROWENEMIESCOUNT;
-    SISprite * enemiesR5_   = enemiesR4_ + ROWENEMIESCOUNT;
-    SISprite * playerFire_  = enemiesR5_ + ROWENEMIESCOUNT;
-    SISprite * enemiesFire_ = playerFire_ + PLAYERFIRECOUNT;
-    SISprite * enemyMother_ = enemiesFire_ + ENEMIESFIRECOUNT;
-
-    int playerVelX_          = 0;  // used when controller is keyboard (0 = no move)
-    int playerAbsX_          = -1; // used when controller is mouse (-1 = no move)
-    int enemiesX_            = ENEMIES_START_X;
-    int enemiesY_            = ENEMIES_START_Y;
-
-    // enemiesDir_
-    //   bit 0 : if 1 moving left
-    //   bit 1 : if 1 moving right
-    //   bit 2 : if 1 moving down
-    //   bit 3 : if 0 before was moving left, if 1 before was moving right
-    // Allowed cases:
-    //   1  = moving left
-    //   2  = moving right
-    //   4  = moving down (before was moving left)
-    //   12 = moving down (before was moving right)
-
-    static constexpr int ENEMY_MOV_LEFT              = 1;
-    static constexpr int ENEMY_MOV_RIGHT             = 2;
-    static constexpr int ENEMY_MOV_DOWN_BEFORE_LEFT  = 4;
-    static constexpr int ENEMY_MOV_DOWN_BEFORE_RIGHT = 12;
-
-    int enemiesDir_          = ENEMY_MOV_RIGHT;
-
-    int enemiesAlive_        = ROWENEMIESCOUNT * 5;
-    int enemiesSoundCount_   = 0;
-    SISprite * lastHitEnemy_ = nullptr;
-    GameState gameState_     = GAMESTATE_PLAYING;
-
-    bool updateScore_        = true;
-    int64_t pauseStart_;
-
-    Bitmap bmpShield[4] = { Bitmap(22, 16, shield_data, PixelFormat::Mask, RGB888(0, 255, 0), true),
-        Bitmap(22, 16, shield_data, PixelFormat::Mask, RGB888(0, 255, 0), true),
-        Bitmap(22, 16, shield_data, PixelFormat::Mask, RGB888(0, 255, 0), true),
-        Bitmap(22, 16, shield_data, PixelFormat::Mask, RGB888(0, 255, 0), true), };
-
-    GameScene()
-    : Scene(SPRITESCOUNT, 20, DisplayController.getViewPortWidth(), DisplayController.getViewPortHeight())
-    {
-    }
-
-    ~GameScene()
-    {
-        delete [] sprites_;
-    }
-
-    void initEnemy(Sprite * sprite, int points)
-    {
-        SISprite * s = (SISprite*) sprite;
-        s->addBitmap(&bmpEnemyExplosion);
-        s->type = TYPE_ENEMY;
-        s->enemyPoints = points;
-        addSprite(s);
-    }
-
-    void init()
-    {
-        // setup player
-        player_->addBitmap(&bmpPlayer)->addBitmap(&bmpPlayerExplosion[0])->addBitmap(&bmpPlayerExplosion[1]);
-        player_->moveTo(152, PLAYER_Y);
-        player_->type = TYPE_PLAYER;
-        addSprite(player_);
-        // setup player fire
-        playerFire_->addBitmap(&bmpPlayerFire);
-        playerFire_->visible = false;
-        playerFire_->type = TYPE_PLAYERFIRE;
-        addSprite(playerFire_);
-        // setup shields
-        for (int i = 0; i < 4; ++i) {
-            shields_[i].addBitmap(&bmpShield[i])->moveTo(35 + i * 75, 150);
-            shields_[i].isStatic = true;
-            shields_[i].type = TYPE_SHIELD;
-            addSprite(&shields_[i]);
-        }
-        // setup enemies
-        for (int i = 0; i < ROWENEMIESCOUNT; ++i) {
-            initEnemy( enemiesR1_[i].addBitmap(&bmpEnemyA[0])->addBitmap(&bmpEnemyA[1]), 30 );
-            initEnemy( enemiesR2_[i].addBitmap(&bmpEnemyB[0])->addBitmap(&bmpEnemyB[1]), 20 );
-            initEnemy( enemiesR3_[i].addBitmap(&bmpEnemyB[0])->addBitmap(&bmpEnemyB[1]), 20 );
-            initEnemy( enemiesR4_[i].addBitmap(&bmpEnemyC[0])->addBitmap(&bmpEnemyC[1]), 10 );
-            initEnemy( enemiesR5_[i].addBitmap(&bmpEnemyC[0])->addBitmap(&bmpEnemyC[1]), 10 );
-        }
-        // setup enemies fire
-        enemiesFire_->addBitmap(&bmpEnemiesFire[0])->addBitmap(&bmpEnemiesFire[1]);
-        enemiesFire_->visible = false;
-        enemiesFire_->type = TYPE_ENEMIESFIRE;
-        addSprite(enemiesFire_);
-        // setup enemy mother ship
-        enemyMother_->addBitmap(&bmpEnemyD)->addBitmap(&bmpEnemyExplosionRed);
-        enemyMother_->visible = false;
-        enemyMother_->type = TYPE_ENEMYMOTHER;
-        enemyMother_->enemyPoints = 100;
-        enemyMother_->moveTo(getWidth(), ENEMIES_START_Y);
-        addSprite(enemyMother_);
-
-        DisplayController.setSprites(sprites_, SPRITESCOUNT);
-
-        canvas.setBrushColor(Color::Black);
-        canvas.clear();
-
-        canvas.setPenColor(Color::Green);
-        canvas.drawLine(0, 180, 320, 180);
-
-        //canvas.setPenColor(Color::Yellow);
-        //canvas.drawRectangle(0, 0, getWidth() - 1, getHeight() - 1);
-
-        canvas.setGlyphOptions(GlyphOptions().FillBackground(true));
-        canvas.selectFont(&fabgl::FONT_4x6);
-        canvas.setPenColor(Color::White);
-        canvas.drawText(125, 20, "WE COME IN PEACE");
-        canvas.selectFont(&fabgl::FONT_8x8);
-        canvas.setPenColor(0, 255, 255);
-        canvas.drawText(2, 2, "SCORE");
-        canvas.setPenColor(0, 0, 255);
-        canvas.drawText(254, 2, "HI-SCORE");
-        canvas.setPenColor(255, 255, 255);
-        canvas.drawTextFmt(254, 181, "Level %02d", level_);
-
-        if (IntroScene::controller_ == 2) {
-            // setup mouse controller
-            auto mouse = PS2Controller.mouse();
-            mouse->setSampleRate(40);  // reduce number of samples from mouse to reduce delays
-            mouse->setupAbsolutePositioner(getWidth() - player_->getWidth(), 0, false); // take advantage of mouse acceleration
-        }
-
-        showLives();
-    }
-
-    void drawScore()
-    {
-        canvas.setPenColor(255, 255, 255);
-        canvas.drawTextFmt(2, 14, "%05d", score_);
-        if (score_ > hiScore_)
-            hiScore_ = score_;
-        canvas.setPenColor(255, 255, 255);
-        canvas.drawTextFmt(266, 14, "%05d", hiScore_);
-    }
-
-    void moveEnemy(SISprite * enemy, int x, int y, bool * touchSide)
-    {
-        if (enemy->visible) {
-            if (x <= 0 || x >= getWidth() - enemy->getWidth())
-                *touchSide = true;
-            enemy->moveTo(x, y);
-            enemy->setFrame(enemy->getFrameIndex() ? 0 : 1);
-            updateSprite(enemy);
-            if (y >= PLAYER_Y) {
-                // enemies reach earth!
-                gameState_ = GAMESTATE_ENDGAME;
-            }
-        }
-    }
-
-    void gameOver()
-    {
-        // disable enemies drawing, so text can be over them
-        for (int i = 0; i < ROWENEMIESCOUNT * 5; ++i)
-            enemies_[i].allowDraw = false;
-        // show game over
-        canvas.setPenColor(0, 255, 0);
-        canvas.setBrushColor(0, 0, 0);
-        canvas.fillRectangle(80, 60, 240, 130);
-        canvas.drawRectangle(80, 60, 240, 130);
-        canvas.setGlyphOptions(GlyphOptions().DoubleWidth(1));
-        canvas.setPenColor(255, 255, 255);
-        canvas.drawText(90, 80, "GAME OVER");
-        canvas.setGlyphOptions(GlyphOptions().DoubleWidth(0));
-        canvas.setPenColor(0, 255, 0);
-        if (IntroScene::controller_ == 1)
-            canvas.drawText(110, 100, "Press [SPACE]");
-        else if (IntroScene::controller_ == 2)
-            canvas.drawText(93, 100, "Click to continue");
-        // change state
-        gameState_ = GAMESTATE_GAMEOVER;
-        level_ = 1;
-        lives_ = 3;
-        score_ = 0;
-    }
-
-    void levelChange()
-    {
-        ++level_;
-        // show game over
-        canvas.setPenColor(0, 255, 0);
-        canvas.drawRectangle(80, 80, 240, 110);
-        canvas.setGlyphOptions(GlyphOptions().DoubleWidth(1));
-        canvas.drawTextFmt(105, 88, "LEVEL %d", level_);
-        canvas.setGlyphOptions(GlyphOptions().DoubleWidth(0));
-        // change state
-        gameState_  = GAMESTATE_LEVELCHANGED;
-        pauseStart_ = esp_timer_get_time();
-    }
-
-    void update(int updateCount)
-    {
-        auto keyboard = PS2Controller.keyboard();
-        auto mouse    = PS2Controller.mouse();
-
-        if (updateScore_) {
-            updateScore_ = false;
-            drawScore();
-        }
-
-        if (gameState_ == GAMESTATE_PLAYING || gameState_ == GAMESTATE_PLAYERKILLED) {
-
-            // move enemies and shoot
-            if ((updateCount % std::max(3, 21 - level_ * 2)) == 0) {
-                // handle enemy explosion
-                if (lastHitEnemy_) {
-                    lastHitEnemy_->visible = false;
-                    lastHitEnemy_ = nullptr;
-                }
-                // handle enemies movement
-                enemiesX_ += (-1 * (enemiesDir_ & 1) + (enemiesDir_ >> 1 & 1)) * ENEMIES_STEP_X;
-                enemiesY_ += (enemiesDir_ >> 2 & 1) * ENEMIES_STEP_Y;
-                bool touchSide = false;
-                for (int i = 0; i < ROWENEMIESCOUNT; ++i) {
-                    moveEnemy(&enemiesR1_[i], enemiesX_ + i * ENEMIES_X_SPACE, enemiesY_ + 0 * ENEMIES_Y_SPACE, &touchSide);
-                    moveEnemy(&enemiesR2_[i], enemiesX_ + i * ENEMIES_X_SPACE, enemiesY_ + 1 * ENEMIES_Y_SPACE, &touchSide);
-                    moveEnemy(&enemiesR3_[i], enemiesX_ + i * ENEMIES_X_SPACE, enemiesY_ + 2 * ENEMIES_Y_SPACE, &touchSide);
-                    moveEnemy(&enemiesR4_[i], enemiesX_ + i * ENEMIES_X_SPACE, enemiesY_ + 3 * ENEMIES_Y_SPACE, &touchSide);
-                    moveEnemy(&enemiesR5_[i], enemiesX_ + i * ENEMIES_X_SPACE, enemiesY_ + 4 * ENEMIES_Y_SPACE, &touchSide);
-                }
-                switch (enemiesDir_) {
-                    case ENEMY_MOV_DOWN_BEFORE_LEFT:
-                        enemiesDir_ = ENEMY_MOV_RIGHT;
-                        break;
-                    case ENEMY_MOV_DOWN_BEFORE_RIGHT:
-                        enemiesDir_ = ENEMY_MOV_LEFT;
-                        break;
-                    default:
-                        if (touchSide)
-                            enemiesDir_ = (enemiesDir_ == ENEMY_MOV_LEFT ? ENEMY_MOV_DOWN_BEFORE_LEFT : ENEMY_MOV_DOWN_BEFORE_RIGHT);
-                        break;
-                }
-                // sound
-                ++enemiesSoundCount_;
-                soundGenerator.playSamples(invadersSoundSamples[enemiesSoundCount_ % 4], invadersSoundSamplesSize[enemiesSoundCount_ % 4]);
-                // handle enemies fire generation
-                if (!enemiesFire_->visible) {
-                    int shottingEnemy = random(enemiesAlive_);
-                    for (int i = 0, a = 0; i < ROWENEMIESCOUNT * 5; ++i) {
-                        if (enemies_[i].visible) {
-                            if (a == shottingEnemy) {
-                                enemiesFire_->x = enemies_[i].x + enemies_[i].getWidth() / 2;
-                                enemiesFire_->y = enemies_[i].y + enemies_[i].getHeight() / 2;
-                                enemiesFire_->visible = true;
-                                break;
-                            }
-                            ++a;
-                        }
-                    }
-                }
-            }
-
-            if (gameState_ == GAMESTATE_PLAYERKILLED) {
-                // animate player explosion or restart playing other lives
-                if ((updateCount % 20) == 0) {
-                    if (player_->getFrameIndex() == 1)
-                        player_->setFrame(2);
-                    else {
-                        player_->setFrame(0);
-                        gameState_ = GAMESTATE_PLAYING;
-                    }
-                }
-            } else if (IntroScene::controller_ == 1 && playerVelX_ != 0) {
-                // move player using Keyboard
-                player_->x += playerVelX_;
-                player_->x = iclamp(player_->x, 0, getWidth() - player_->getWidth());
-                updateSprite(player_);
-            } else if (IntroScene::controller_ == 2 && playerAbsX_ != -1) {
-                // move player using Mouse
-                player_->x = playerAbsX_;
-                playerAbsX_ = -1;
-                updateSprite(player_);
-            }
-
-            // move player fire
-            if (playerFire_->visible) {
-                playerFire_->y -= 3;
-                if (playerFire_->y < ENEMIES_START_Y)
-                    playerFire_->visible = false;
-                else
-                    updateSpriteAndDetectCollisions(playerFire_);
-            }
-
-            // move enemies fire
-            if (enemiesFire_->visible) {
-                enemiesFire_->y += 2;
-                enemiesFire_->setFrame( enemiesFire_->getFrameIndex() ? 0 : 1 );
-                if (enemiesFire_->y > PLAYER_Y + player_->getHeight())
-                    enemiesFire_->visible = false;
-                else
-                    updateSpriteAndDetectCollisions(enemiesFire_);
-            }
-
-            // move enemy mother ship
-            if (enemyMother_->visible && enemyMother_->getFrameIndex() == 0) {
-                enemyMother_->x -= 1;
-                if (enemyMother_->x < -enemyMother_->getWidth())
-                    enemyMother_->visible = false;
-                else
-                    updateSprite(enemyMother_);
-            }
-
-            // start enemy mother ship
-            if ((updateCount % 800) == 0) {
-                soundGenerator.playSamples(motherShipSoundSamples, sizeof(motherShipSoundSamples), 100, 7000);
-                enemyMother_->x = getWidth();
-                enemyMother_->setFrame(0);
-                enemyMother_->visible = true;
-            }
-
-            // handle fire and movement from controller
-            if (IntroScene::controller_ == 1) {
-                // KEYBOARD controller
-                if (keyboard->isVKDown(fabgl::VK_LEFT)) {
-                    playerVelX_ = -1;
-                } else if (keyboard->isVKDown(fabgl::VK_RIGHT)) {
-                    playerVelX_ = +1;
-                } else {
-                    playerVelX_ = 0;
-                }
-                if (keyboard->isVKDown(fabgl::VK_SPACE) && !playerFire_->visible) {
-                    fire();
-                }
-            } else if (IntroScene::controller_ == 2) {
-                // MOUSE controller
-                if (mouse->deltaAvailable()) {
-                    MouseDelta delta;
-                    mouse->getNextDelta(&delta);
-                    mouse->updateAbsolutePosition(&delta);
-                    playerAbsX_ = mouse->status().X;
-                    if (delta.buttons.left && !playerFire_->visible)    // player fire?
-                        fire();
-                }
-            }
-        }
-
-        if (gameState_ == GAMESTATE_ENDGAME)
-            gameOver();
-
-        if (gameState_ == GAMESTATE_LEVELCHANGING)
-            levelChange();
-
-        if (gameState_ == GAMESTATE_LEVELCHANGED && esp_timer_get_time() >= pauseStart_ + 2500000) {
-            stop(); // restart from next level
-            DisplayController.removeSprites();
-        }
-
-        if (gameState_ == GAMESTATE_GAMEOVER) {
-
-            // animate player burning
-            if ((updateCount % 20) == 0)
-                player_->setFrame( player_->getFrameIndex() == 1 ? 2 : 1);
-
-            // wait for SPACE or click from mouse
-            if ((IntroScene::controller_ == 1 && keyboard->isVKDown(fabgl::VK_SPACE)) ||
-                (IntroScene::controller_ == 2 && mouse->deltaAvailable() && mouse->getNextDelta(nullptr, 0) && mouse->status().buttons.left)) {
-                stop();
-                DisplayController.removeSprites();
-            }
-
-        }
-
-        DisplayController.refreshSprites();
-    }
-
-    // player shoots
-    void fire()
-    {
-        playerFire_->moveTo(player_->x + 7, player_->y - 1)->visible = true;
-        soundGenerator.playSamples(fireSoundSamples, sizeof(fireSoundSamples));
-    }
-
-    // shield has been damaged
-    void damageShield(SISprite * shield, Point collisionPoint)
-    {
-        Bitmap * shieldBitmap = shield->getFrame();
-        int x = collisionPoint.X - shield->x;
-        int y = collisionPoint.Y - shield->y;
-        shieldBitmap->setPixel(x, y, 0);
-        for (int i = 0; i < 32; ++i) {
-            int px = iclamp(x + random(-4, 5), 0, shield->getWidth() - 1);
-            int py = iclamp(y + random(-4, 5), 0, shield->getHeight() - 1);
-            shieldBitmap->setPixel(px, py, 0);
-        }
-    }
-
-    void showLives()
-    {
-        canvas.fillRectangle(1, 181, 100, 195);
-        canvas.setPenColor(Color::White);
-        canvas.drawTextFmt(5, 181, "%d", lives_);
-        for (int i = 0; i < lives_; ++i)
-            canvas.drawBitmap(15 + i * (bmpPlayer.width + 5), 183, &bmpPlayer);
-    }
-
-    void collisionDetected(Sprite * spriteA, Sprite * spriteB, Point collisionPoint)
-    {
-        SISprite * sA = (SISprite*) spriteA;
-        SISprite * sB = (SISprite*) spriteB;
-        if (!lastHitEnemy_ && sA->type == TYPE_PLAYERFIRE && sB->type == TYPE_ENEMY) {
-            // player fire hits an enemy
-            soundGenerator.playSamples(shootSoundSamples, sizeof(shootSoundSamples));
-            sA->visible = false;
-            sB->setFrame(2);
-            lastHitEnemy_ = sB;
-            --enemiesAlive_;
-            score_ += sB->enemyPoints;
-            updateScore_ = true;
-            if (enemiesAlive_ == 0)
-                gameState_ = GAMESTATE_LEVELCHANGING;
-        }
-        if (sB->type == TYPE_SHIELD) {
-            // something hits a shield
-            sA->visible = false;
-            damageShield(sB, collisionPoint);
-            sB->allowDraw = true;
-        }
-        if (gameState_ == GAMESTATE_PLAYING && sA->type == TYPE_ENEMIESFIRE && sB->type == TYPE_PLAYER) {
-            // enemies fire hits player
-            soundGenerator.playSamples(explosionSoundSamples, sizeof(explosionSoundSamples));
-            --lives_;
-            gameState_ = lives_ ? GAMESTATE_PLAYERKILLED : GAMESTATE_ENDGAME;
-            player_->setFrame(1);
-            showLives();
-        }
-        if (sB->type == TYPE_ENEMYMOTHER) {
-            // player fire hits enemy mother ship
-            soundGenerator.playSamples(mothershipexplosionSoundSamples, sizeof(mothershipexplosionSoundSamples));
-            sA->visible = false;
-            sB->setFrame(1);
-            lastHitEnemy_ = sB;
-            score_ += sB->enemyPoints;
-            updateScore_ = true;
-        }
-    }
-
-};
-
-int GameScene::hiScore_ = 0;
-int GameScene::level_   = 1;
-int GameScene::lives_   = 3;
-int GameScene::score_   = 0;
-
-void
-setup()
+ 
+ 
+ 
+int currentResolution = 24;  // VESA_640x480_75Hz
+int moveX = 0;
+int moveY = 0;
+int shrinkX = 0;
+int shrinkY = 0;
+ 
+ 
+fabgl::VGA2Controller VGAController;
+ 
+ 
+ 
+void printHelp()
 {
-    Serial.begin(115200);
-    PS2Controller.begin(PS2Preset::KeyboardPort0, KbdMode::GenerateVirtualKeys);
-
-    Ps3.begin("24:6f:28:af:1c:66");
-    DisplayController.begin();
-    DisplayController.setResolution("\"300x240@60Hz\" 12.375 304 312 360 400 240 245 246 262 -HSync -VSync DoubleScan");
-    Serial.println("¡Listo!");
+  Serial.printf("Modeline studio\n");
+  Serial.printf("Chip Revision: %d   Chip Frequency: %d MHz\n\n", ESP.getChipRevision(), ESP.getCpuFreqMHz());
+  Serial.printf("%s\n", VGAController.getResolutionTimings()->label);
+  Serial.printf("\nScreen move:\n");
+  Serial.printf("  w = Move Up   z = Move Down   a = Move Left   s = Move Right\n");
+  Serial.printf("Screen shrink:\n");
+  Serial.printf("  n = Dec Horiz N = Inc Horiz   m = Dec Vert    M = Inc Vert\n");
+  Serial.printf("Resolutions:\n");
+  Serial.printf("  + = Next resolution  - = Prev resolution   x = Restore modeline\n");
+  Serial.printf("Modeline change:\n");
+  Serial.printf("  Just insert a modline. Example: \"640x350@70Hz\" 25.175 640 656 752 800 350 366 462 510 -HSync -VSync\n");
+  Serial.printf("  e = Decrease horiz. Front Porch   E = Increase horiz. Front Porch\n");
+  Serial.printf("  r = Decrease horiz. Sync Pulse    R = Increase horiz. Sync Pulse\n");
+  Serial.printf("  t = Decrease horiz. Bach Porch    T = Increase horiz. Back Porch\n");
+  Serial.printf("  y = Decrease vert. Front Porch    Y = Increase vert. Front Porch\n");
+  Serial.printf("  u = Decrease vert. Sync Pulse     U = Increase vert. Sync Pulse\n");
+  Serial.printf("  i = Decrease vert. Bach Porch     I = Increase vert. Back Porch\n");
+  //*/
+  Serial.printf("  o = Decrease frequency by 5KHz    O = Increase frequency by 5KHz\n");
+  Serial.printf("  . = Change horiz. signals order\n");
+  Serial.printf("Various:\n");
+  Serial.printf("  h = Print This help\n\n");
 }
+ 
+ 
+void printInfo()
+{
+  auto t = VGAController.getResolutionTimings();
+  Serial.printf("Modeline \"%s\" %2.8g %d %d %d %d %d %d %d %d %cHSync %cVSync %s %s\n",
+                t->label,
+                t->frequency / 1000000.0,
+                t->HVisibleArea,
+                t->HVisibleArea + t->HFrontPorch,
+                t->HVisibleArea + t->HFrontPorch + t->HSyncPulse,
+                t->HVisibleArea + t->HFrontPorch + t->HSyncPulse + t->HBackPorch,
+                t->VVisibleArea,
+                t->VVisibleArea + t->VFrontPorch,
+                t->VVisibleArea + t->VFrontPorch + t->VSyncPulse,
+                t->VVisibleArea + t->VFrontPorch + t->VSyncPulse + t->VBackPorch,
+                t->HSyncLogic, t->VSyncLogic,
+                t->scanCount == 2 ? "DoubleScan" : "",
+                t->HStartingBlock == VGAScanStart::FrontPorch ? "FrontPorchBegins" :
+                (t->HStartingBlock == VGAScanStart::Sync ? "SyncBegins" :
+                (t->HStartingBlock == VGAScanStart::BackPorch ? "BackPorchBegins" : "VisibleBegins")));
+ 
+  //Serial.printf("VFront = %d, VSync = %d, VBack = %d\n", t->VFrontPorch, t->VSyncPulse, t->VBackPorch);
+ 
+  if (moveX || moveY)
+    Serial.printf("moveScreen(%d, %d)\n", moveX, moveY);
+  if (shrinkX || shrinkY)
+    Serial.printf("shrinkScreen(%d, %d)\n", shrinkX, shrinkY);
+  Serial.printf("Screen size   : %d x %d\n", VGAController.getScreenWidth(), VGAController.getScreenHeight());
+  Serial.printf("Viewport size : %d x %d\n", VGAController.getViewPortWidth(), VGAController.getViewPortHeight());
+  Serial.printf("Free memory (total, min, largest): %d, %d, %d\n\n", heap_caps_get_free_size(MALLOC_CAP_32BIT),
+                                                                   heap_caps_get_minimum_free_size(MALLOC_CAP_32BIT),
+                                                                   heap_caps_get_largest_free_block(MALLOC_CAP_32BIT));
+}
+ 
+ 
+void updateScreen()
+{
+  Canvas cv(&VGAController);
+  cv.setPenColor(Color::White);
+  cv.setBrushColor(Color::Black);
+  cv.clear();
+  cv.fillRectangle(0, 0, cv.getWidth() - 1, cv.getHeight() - 1);
+  cv.drawRectangle(0, 0, cv.getWidth() - 1, cv.getHeight() - 1);
 
+  cv.setBrushColor(Color::White);
+  cv.fillRectangle(10, 10, 20, 20);
+  cv.setBrushColor(Color::Black);
+ 
+  cv.selectFont(&fabgl::FONT_8x8);
+  cv.setGlyphOptions(GlyphOptions().FillBackground(true).DoubleWidth(1));
+  cv.drawText(40, 20, VGAController.getResolutionTimings()->label);
+ 
+  cv.setGlyphOptions(GlyphOptions());
+  cv.drawTextFmt(40, 40, "Screen Size   : %d x %d", VGAController.getScreenWidth(), VGAController.getScreenHeight());
+  cv.drawTextFmt(40, 60, "Viewport Size : %d x %d", cv.getWidth(), cv.getHeight());
+  cv.drawText(40, 80,    "Commands (More on UART):");
+  cv.drawText(40, 100,   "  w = Move Up    z = Move Down");
+  cv.drawText(40, 120,   "  a = Move Left  s = Move Right");
+  cv.drawText(40, 140,   "  + = Next Resolution");
+  cv.drawRectangle(35, 15, 310, 155);
+}
+ 
+ 
+ 
+void setup()
+{
+  Serial.begin(115200);
+ 
+  // avoid garbage into the UART
+  delay(500);
+ 
+  VGAController.begin();
+  VGAController.setResolution(PresetResolutions[currentResolution]);
+  updateScreen();
+  printHelp();
+  printInfo();
+}
+ 
+ 
 void loop()
 {
-    if (GameScene::level_ == 1) {
-        IntroScene introScene;
-        introScene.start();
+  fabgl::VGATimings t;
+ 
+  if (Serial.available() > 0) {
+    char c = Serial.read();
+    switch (c) {
+      case 'h':
+        printHelp();
+        break;
+      case 'w':
+        --moveY;
+        VGAController.moveScreen(0, -1);
+        printInfo();
+        break;
+      case 'z':
+        ++moveY;
+        VGAController.moveScreen(0, +1);
+        printInfo();
+        break;
+      case 'a':
+        --moveX;
+        VGAController.moveScreen(-1, 0);
+        printInfo();
+        break;
+      case 's':
+        ++moveX;
+        VGAController.moveScreen(+1, 0);
+        printInfo();
+        break;
+      case 'x':
+        moveX = moveY = shrinkX = shrinkY = 0;
+        VGAController.setResolution(PresetResolutions[currentResolution]);
+        updateScreen();
+        printInfo();
+        break;
+      case '+':
+      case '-':
+        moveX = moveY = shrinkX = shrinkY = 0;
+        currentResolution = (c == '+' ? currentResolution + 1 : currentResolution - 1);
+        if (currentResolution == sizeof(PresetResolutions) / sizeof(const char *))
+          currentResolution = 0;
+        if (currentResolution < 0)
+          currentResolution = sizeof(PresetResolutions) / sizeof(const char *) - 1;
+        VGAController.setResolution(PresetResolutions[currentResolution]);
+        updateScreen();
+        printInfo();
+        break;
+      case '"':
+        moveX = moveY = shrinkX = shrinkY = 0;
+        VGAController.setResolution( (String("\"") + Serial.readStringUntil('\n')).c_str() );
+        updateScreen();
+        printInfo();
+        break;
+      case 'e':
+      case 'E':
+        t = *VGAController.getResolutionTimings();
+        t.HFrontPorch = (c == 'e' ? t.HFrontPorch - 1 : t.HFrontPorch + 1);
+        t.HBackPorch = (c == 'e' ? t.HBackPorch + 1 : t.HBackPorch - 1);
+        VGAController.setResolution(t);
+        updateScreen();
+        printInfo();
+        break;
+      case 'r':
+      case 'R':
+        t = *VGAController.getResolutionTimings();
+        t.HSyncPulse = (c == 'r' ? t.HSyncPulse - 1 : t.HSyncPulse + 1);
+        t.HBackPorch = (c == 'r' ? t.HBackPorch + 1 : t.HBackPorch - 1);
+        VGAController.setResolution(t);
+        updateScreen();
+        printInfo();
+        break;
+      case 't':
+      case 'T':
+        t = *VGAController.getResolutionTimings();
+        t.HBackPorch = (c == 't' ? t.HBackPorch - 1 : t.HBackPorch + 1);
+        t.HFrontPorch = (c == 't' ? t.HFrontPorch + 1 : t.HFrontPorch - 1);
+        VGAController.setResolution(t);
+        updateScreen();
+        printInfo();
+        break;
+      case 'y':
+      case 'Y':
+        t = *VGAController.getResolutionTimings();
+        t.VFrontPorch = (c == 'y' ? t.VFrontPorch - 1 : t.VFrontPorch + 1);
+        t.VBackPorch = (c == 'y' ? t.VBackPorch + 1 : t.VBackPorch - 1);
+        VGAController.setResolution(t);
+        updateScreen();
+        printInfo();
+        break;
+      case 'u':
+      case 'U':
+        t = *VGAController.getResolutionTimings();
+        t.VSyncPulse = (c == 'u' ? t.VSyncPulse - 1 : t.VSyncPulse + 1);
+        t.VBackPorch = (c == 'u' ? t.VBackPorch + 1 : t.VBackPorch - 1);
+        VGAController.setResolution(t);
+        updateScreen();
+        printInfo();
+        break;
+      case 'i':
+      case 'I':
+        t = *VGAController.getResolutionTimings();
+        t.VBackPorch = (c == 'i' ? t.VBackPorch - 1 : t.VBackPorch + 1);
+        t.VFrontPorch = (c == 'i' ? t.VFrontPorch + 1 : t.VFrontPorch - 1);
+        VGAController.setResolution(t);
+        updateScreen();
+        printInfo();
+        break;
+      //*/
+      case 'o':
+      case 'O':
+        t = *VGAController.getResolutionTimings();
+        t.frequency = (c == 'o' ? t.frequency - 5000 : t.frequency + 5000);
+        VGAController.setResolution(t);
+        updateScreen();
+        printInfo();
+        break;
+      case '.':
+        t = *VGAController.getResolutionTimings();
+        switch (t.HStartingBlock) {
+          case VGAScanStart::FrontPorch:
+            t.HStartingBlock = VGAScanStart::Sync;
+            break;
+          case VGAScanStart::Sync:
+            t.HStartingBlock = VGAScanStart::BackPorch;
+            break;
+          case VGAScanStart::BackPorch:
+            t.HStartingBlock = VGAScanStart::VisibleArea;
+            break;
+          case VGAScanStart::VisibleArea:
+            t.HStartingBlock = VGAScanStart::FrontPorch;
+            break;
+        }
+        VGAController.setResolution(t);
+        updateScreen();
+        printInfo();
+        break;
+      case 'n':
+        ++shrinkX;
+        VGAController.shrinkScreen(+1, 0);
+        updateScreen();
+        printInfo();
+        break;
+      case 'N':
+        --shrinkX;
+        VGAController.shrinkScreen(-1, 0);
+        updateScreen();
+        printInfo();
+        break;
+      case 'm':
+        ++shrinkY;
+        VGAController.shrinkScreen(0, +1);
+        updateScreen();
+        printInfo();
+        break;
+      case 'M':
+        --shrinkY;
+        VGAController.shrinkScreen(0, -1);
+        updateScreen();
+        printInfo();
+        break;
     }
-    GameScene gameScene;
-    gameScene.start();
+  }
 }
